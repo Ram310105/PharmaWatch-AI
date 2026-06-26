@@ -406,9 +406,4 @@ Passionate about building intelligent AI systems that solve real-world healthcar
 
 ---
 
-# ⭐ Support
-
-If you found this project useful or interesting, please consider giving it a ⭐ on GitHub.
-
-Your support encourages further development and innovation.
 ````
