@@ -76,52 +76,50 @@ Examples of NOT RELEVANT
 Choose ONLY one category:
 
 Shipping Disruption
-
 Manufacturing Disruption
-
 Trade Restriction
-
 Geopolitical Conflict
-
 Natural Disaster
-
 Public Health Event
-
 Regulatory Action
-
 Infrastructure Failure
-
 Economic Disruption
-
 Other
 
 --------------------------------------------------
 
-OUTPUT RULES
+STRICT JSON RULES
 
-Return ONLY the structured response.
+Return ONLY valid structured output.
 
-Do NOT explain.
+DO NOT return markdown.
 
-Do NOT include markdown.
+DO NOT return explanations.
 
-Do NOT include extra text.
+DO NOT return comments.
 
-Do NOT include blank lines.
+DO NOT wrap booleans in quotes.
 
-Headline must be under 150 characters.
+The field "relevant" MUST be a BOOLEAN.
 
-Summary must be at most two sentences.
+Correct:
+relevant = true
+relevant = false
 
-If information is missing, return null.
+Incorrect:
+relevant = "true"
+relevant = "false"
 
 If the article is unrelated:
 
 relevant = false
-
 event_type = Other
 
-Still fill the remaining fields as best as possible.
+Headline must be under 150 characters.
+
+Summary must be no more than two sentences.
+
+If information is unavailable, return null.
 
 Never hallucinate.
 """

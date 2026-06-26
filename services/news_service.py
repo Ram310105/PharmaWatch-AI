@@ -1,5 +1,4 @@
 from typing import List
-
 import httpx
 
 from config import (
@@ -18,29 +17,33 @@ class NewsService:
     """
     Fetches the latest news from NewsAPI.
 
-    Responsibilities:
-    -----------------
+    Responsibilities
+    ----------------
     • Fetch latest news
     • Validate API response
     • Convert NewsAPI response into RawArticle objects
-
-    It DOES NOT:
-    -----------------
-    • Perform LLM reasoning
-    • Filter relevance
-    • Summarize news
     """
 
     BASE_URL = "https://newsapi.org/v2/everything"
 
     def __init__(self):
 
+        print("=" * 60)
+        print("NewsService Initialization")
+        print("=" * 60)
+        print(f"NEWS_API_KEY imported = {NEWS_API_KEY}")
+        print("=" * 60)
+        print("NEWS_API_KEY imported in NewsService =", repr(NEWS_API_KEY))
         if not NEWS_API_KEY:
             raise ValueError(
                 "NEWS_API_KEY not found in environment variables."
             )
 
         self.api_key = NEWS_API_KEY
+
+    # =====================================================
+    # Fetch News
+    # =====================================================
 
     def fetch_latest_news(self) -> List[RawArticle]:
 
@@ -67,6 +70,8 @@ class NewsService:
 
             articles = data.get("articles", [])
 
+            print(f"Fetched {len(articles)} articles from NewsAPI.")
+
             return [
                 self._normalize(article)
                 for article in articles
@@ -74,15 +79,22 @@ class NewsService:
 
         except Exception as e:
 
-            print(f"[NewsAPI Error] {e}")
+            print("=" * 60)
+            print("NewsAPI Error")
+            print("=" * 60)
+            print(e)
+            print("=" * 60)
 
             return []
 
-    def _normalize(self, article: dict) -> RawArticle:
-        """
-        Converts a NewsAPI article
-        into a RawArticle object.
-        """
+    # =====================================================
+    # Normalize
+    # =====================================================
+
+    def _normalize(
+        self,
+        article: dict,
+    ) -> RawArticle:
 
         return RawArticle(
 
@@ -92,7 +104,10 @@ class NewsService:
 
             content=article.get("content"),
 
-            source=article.get("source", {}).get(
+            source=article.get(
+                "source",
+                {},
+            ).get(
                 "name",
                 "Unknown",
             ),
@@ -104,9 +119,22 @@ class NewsService:
                 "",
             ),
         )
+
+
+# =====================================================
+# Testing
+# =====================================================
+
 if __name__ == "__main__":
+
     service = NewsService()
 
     articles = service.fetch_latest_news()
 
-    print(articles)
+    print("\n")
+
+    for article in articles[:3]:
+
+        print("-" * 60)
+        print(article.title)
+        print(article.source)

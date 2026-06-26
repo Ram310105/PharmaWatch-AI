@@ -84,24 +84,31 @@ def research_event(
     try:
 
         report = research_chain.invoke(
-            {
-                "headline": event.headline,
-                "event_type": event.event_type,
-                "location": event.location,
-                "summary": event.summary,
-                "event": event,
-                "evidence": evidence,
-            }
-        )
+    {
+        "headline": event.headline,
+        "event_type": event.event_type,
+        "location": event.location,
+        "summary": event.summary,
+        "evidence": evidence,
+    }
+)
 
         return report
 
-    except ValidationError:
+    except Exception as e:
 
+        print(f"\nResearch Chain Error:\n{e}\n")
         return ResearchReport(
-            event=event,
 
-            summary="Unable to generate research report.",
+            headline=event.headline or "Unknown",
+
+            event_type=str(event.event_type),
+
+            event_summary=event.summary or "No summary available.",
+
+            location=event.location,
+
+            research_summary="Unable to generate research report.",
 
             affected_regions=[],
 
@@ -116,13 +123,13 @@ def research_event(
             affected_api_suppliers=[],
 
             affected_raw_materials=[],
-
+ 
             evidence=[],
 
             web_sources=[],
 
             confidence=0.0,
-        )
+    )
 
 
 # ==========================================================
