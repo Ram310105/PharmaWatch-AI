@@ -4,7 +4,7 @@
 Global Pharmaceutical Supply Chain Intelligence
 ==========================================================
 
-Author : Ram Sai Team
+Author : Code Force Team
 Frontend : Streamlit
 Backend : Multi-Agent AI (Groq + Tavily + NewsAPI + GDELT)
 
@@ -804,7 +804,7 @@ Research Agent  (Tavily web search + LLM synthesis)
 ```
 
 #### Team
-Built with ❤️ by **Ram Sai Team** · Confluence Hackathon
+Built with ❤️ by **CodeForce Team** · Confluence Hackathon
     """)
 
 
