@@ -50,7 +50,7 @@ st.markdown("""
 
 /* ---- layout ---- */
 .block-container {
-    padding-top: 1.2rem;
+    padding-top: 3rem;
     padding-bottom: 2rem;
 }
 
@@ -116,10 +116,12 @@ section[data-testid="stSidebar"] * {
 
 /* ---- big title ---- */
 .big-title {
-    font-size: 40px;
+    font-size: 32px;
     font-weight: 800;
     color: #e6edf3;
     letter-spacing: -1px;
+    white-space: normal;
+    word-break: break-word;
 }
 .sub-title {
     font-size: 16px;
