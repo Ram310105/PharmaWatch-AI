@@ -27,6 +27,7 @@ from services.gdelt_service import GDELTService
 from agents.event_agent import EventAgent
 from agents.research_agent import ResearchAgent
 from agents.risk_agent import RiskAgent
+from agents.alternatives_agent import AlternativesAgent
 
 
 # ==========================================================
@@ -144,6 +145,8 @@ if "research_reports" not in st.session_state:
     st.session_state.research_reports = []
 if "risk_reports" not in st.session_state:
     st.session_state.risk_reports = []
+if "alternatives_reports" not in st.session_state:
+    st.session_state.alternatives_reports = []
 if "run_timestamp" not in st.session_state:
     st.session_state.run_timestamp = None
 
@@ -562,44 +565,205 @@ elif page == "⚠️ Risk Assessment":
 
 elif page == "🏥 Hospital Simulation":
     st.subheader("🏥 Hospital Simulation")
-    st.caption("Simulate the impact of a supply chain disruption on hospital operations.")
+    st.caption(
+        "Simulate the impact of a supply chain disruption on hospital operations. "
+        "Pulls real disruption context from the Risk Agent when available."
+    )
     st.divider()
+
+    # ------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------
+
+    def parse_shortage_duration(estimate: str) -> int:
+        """
+        Convert a RiskReport.estimated_shortage_time string
+        (e.g. '1-2 Weeks', '2-4 Weeks', '1-3 Months', 'Unknown',
+        'No expected shortage') into a usable simulation
+        duration in days.
+
+        Always returns a value within the simulation's allowed
+        slider range (7-180) so it can safely seed the widget.
+        """
+        if not estimate:
+            return 30
+
+        text = estimate.strip().lower()
+
+        if "no expected shortage" in text:
+            return 14
+
+        import re
+        numbers = [int(n) for n in re.findall(r"\d+", text)]
+
+        if not numbers:
+            return 30  # "Unknown" or unparseable -> reasonable default
+
+        # Use the upper end of the range for a conservative estimate
+        upper = max(numbers)
+
+        if "month" in text:
+            days = upper * 30
+        else:  # weeks, or no unit given
+            days = upper * 7
+
+        return max(7, min(180, days))
+
+    def risk_score_to_usage_multiplier(score: int) -> float:
+        """
+        Higher risk scores imply more panic-buying / hoarding /
+        rationing behavior at the hospital level, modeled as a
+        modest bump to baseline daily usage.
+        """
+        if score >= 80:
+            return 1.4
+        if score >= 50:
+            return 1.2
+        return 1.0
+
+    # ------------------------------------------------------
+    # Source selection: real risk report vs manual entry
+    # ------------------------------------------------------
+
+    has_risk_data = bool(
+        st.session_state.pipeline_run and st.session_state.risk_reports
+    )
+
+    selected_report = None
+
+    if has_risk_data:
+        source_mode = st.radio(
+            "Simulation Source",
+            ["📡 Use a Risk Report", "✍️ Manual Entry"],
+            horizontal=True,
+        )
+    else:
+        source_mode = "✍️ Manual Entry"
+        st.info(
+            "No pipeline run yet — simulating with manually entered values. "
+            "Run the pipeline from the Dashboard to simulate against real "
+            "detected disruptions."
+        )
+
+    if source_mode == "📡 Use a Risk Report":
+        # Flatten (report, medicine) pairs so the dropdown is
+        # per-medicine, not per-report.
+        med_options = []
+        for r in st.session_state.risk_reports:
+            meds = safe_list(getattr(r, "affected_medicines", []))
+            if not meds:
+                continue
+            for m in meds:
+                med_options.append((f"{m} — {r.headline[:60]} ({r.overall_risk})", m, r))
+
+        if not med_options:
+            st.warning(
+                "The latest pipeline run didn't flag specific medicines. "
+                "Switch to Manual Entry below."
+            )
+            source_mode = "✍️ Manual Entry"
+        else:
+            labels = [opt[0] for opt in med_options]
+            choice = st.selectbox("Select an at-risk medicine", labels)
+            idx = labels.index(choice)
+            default_medicine, selected_report = med_options[idx][1], med_options[idx][2]
+
+            st.markdown(
+                f"**Risk Level:** {risk_badge(selected_report.overall_risk)} &nbsp;&nbsp;"
+                f"**Risk Score:** {selected_report.risk_score}/100 &nbsp;&nbsp;"
+                f"**Estimated Shortage:** {selected_report.estimated_shortage_time}",
+                unsafe_allow_html=True,
+            )
+            st.caption(f"Triggering event: {selected_report.headline}")
+
+    if source_mode == "✍️ Manual Entry":
+        default_medicine = ""
+
+    st.divider()
+
+    # ------------------------------------------------------
+    # Simulation inputs
+    # ------------------------------------------------------
+
+    default_duration = (
+        parse_shortage_duration(selected_report.estimated_shortage_time)
+        if selected_report else 30
+    )
+    default_scenario_map = {
+        "Shipping Disruption": "Port Closure",
+        "Manufacturing Disruption": "Factory Shutdown",
+        "Trade Restriction": "Export Ban",
+        "Geopolitical Conflict": "Sanctions",
+        "Natural Disaster": "Natural Disaster",
+    }
+    default_scenario = (
+        default_scenario_map.get(selected_report.event_type, "Factory Shutdown")
+        if selected_report else "Factory Shutdown"
+    )
+    scenario_options = ["Factory Shutdown", "Port Closure", "Export Ban", "Natural Disaster", "Sanctions"]
 
     col1, col2 = st.columns(2)
     with col1:
         scenario = st.selectbox(
             "Disruption Scenario",
-            ["Factory Shutdown", "Port Closure", "Export Ban", "Natural Disaster", "Sanctions"],
+            scenario_options,
+            index=scenario_options.index(default_scenario),
         )
-        medicine = st.text_input("Medicine / API", placeholder="e.g. Paracetamol")
+        medicine = st.text_input("Medicine / API", value=default_medicine, placeholder="e.g. Paracetamol")
         hospital_beds = st.number_input("Hospital Bed Count", min_value=50, max_value=5000, value=500, step=50)
     with col2:
-        duration_days = st.slider("Disruption Duration (days)", 7, 180, 30)
+        duration_days = st.slider("Disruption Duration (days)", 7, 180, default_duration)
         current_stock = st.slider("Current Stock (days of supply)", 1, 90, 14)
-        daily_usage   = st.number_input("Daily Units Used", min_value=10, max_value=10000, value=200, step=10)
+        daily_usage   = st.number_input("Baseline Daily Units Used", min_value=10, max_value=10000, value=200, step=10)
+
+    if selected_report:
+        st.caption(
+            f"💡 Duration pre-filled from the Risk Agent's estimate "
+            f"(\"{selected_report.estimated_shortage_time}\"). Adjust as needed."
+        )
 
     if st.button("▶ Run Simulation", type="primary"):
+        usage_multiplier = (
+            risk_score_to_usage_multiplier(selected_report.risk_score)
+            if selected_report else 1.0
+        )
+        effective_daily_usage = daily_usage * usage_multiplier
+
         shortage_day = max(0, current_stock)
         deficit_days = max(0, duration_days - current_stock)
-        total_deficit = deficit_days * daily_usage
+        total_deficit = deficit_days * effective_daily_usage
 
         st.divider()
         st.markdown("#### Simulation Results")
 
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Shortage Onset",    f"Day {shortage_day}")
+        if selected_report and usage_multiplier > 1.0:
+            st.caption(
+                f"⚠️ Daily usage adjusted ×{usage_multiplier:.1f} to reflect "
+                f"{selected_report.overall_risk} risk level (hoarding / rationing effects)."
+            )
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Shortage Onset", f"Day {shortage_day}")
         m2.metric("Days Without Stock", str(deficit_days))
-        m3.metric("Total Unit Deficit", f"{total_deficit:,}")
+        m3.metric("Total Unit Deficit", f"{total_deficit:,.0f}")
+        m4.metric("Beds Affected (est.)", f"{hospital_beds:,}" if deficit_days > 0 else "0")
 
         # Timeline chart
         days = list(range(duration_days + 1))
-        stock_levels = [max(0, current_stock - d) * daily_usage for d in days]
+        stock_levels = [max(0, current_stock - d) * effective_daily_usage for d in days]
         df_sim = pd.DataFrame({"Day": days, "Stock Units": stock_levels})
 
         fig = px.area(
             df_sim, x="Day", y="Stock Units",
             title=f"Projected Stock Level — {medicine or 'Medicine'} ({scenario})",
             color_discrete_sequence=["#3fb950"],
+        )
+        fig.add_vline(
+            x=shortage_day,
+            line_dash="dash",
+            line_color="#f85149",
+            annotation_text="Stock depleted",
+            annotation_position="top",
         )
         fig.update_layout(
             paper_bgcolor="rgba(0,0,0,0)",
@@ -611,8 +775,13 @@ elif page == "🏥 Hospital Simulation":
         if deficit_days > 0:
             st.error(
                 f"⚠️ Stock will run out on **Day {shortage_day}**. "
-                f"Procure at least **{total_deficit:,} units** to cover the disruption."
+                f"Procure at least **{total_deficit:,.0f} units** to cover the disruption."
             )
+            if medicine.strip():
+                st.info(
+                    f"💊 Need a backup plan? Check the **Drug Alternatives** page "
+                    f"for therapeutic substitutes for **{medicine.strip()}**."
+                )
         else:
             st.success("✅ Current stock is sufficient to cover the full disruption window.")
 
@@ -623,45 +792,126 @@ elif page == "🏥 Hospital Simulation":
 
 elif page == "💊 Drug Alternatives":
     st.subheader("💊 Drug Alternatives")
-    st.caption("Find therapeutic alternatives when a medicine faces a shortage.")
+    st.caption(
+        "Find therapeutic alternatives when a medicine faces a shortage. "
+        "Results are grounded in live web evidence, not pre-loaded data."
+    )
     st.divider()
 
-    query = st.text_input("Enter medicine name", placeholder="e.g. Amoxicillin")
+    tab_manual, tab_auto = st.tabs(["🔍 Manual Search", "⚡ Auto-Suggest from Risk Reports"])
 
-    # Static lookup — extend or replace with a live API / LLM call
-    ALTERNATIVES_DB = {
-        "amoxicillin":   ["Ampicillin", "Cloxacillin", "Cefalexin", "Azithromycin"],
-        "paracetamol":   ["Ibuprofen", "Aspirin", "Diclofenac", "Naproxen"],
-        "metformin":     ["Glipizide", "Sitagliptin", "Empagliflozin", "Insulin"],
-        "atorvastatin":  ["Rosuvastatin", "Simvastatin", "Pravastatin", "Lovastatin"],
-        "amlodipine":    ["Nifedipine", "Felodipine", "Verapamil", "Diltiazem"],
-        "omeprazole":    ["Pantoprazole", "Esomeprazole", "Lansoprazole", "Rabeprazole"],
-        "ciprofloxacin": ["Levofloxacin", "Moxifloxacin", "Norfloxacin", "Doxycycline"],
-    }
+    # ------------------------------------------------------
+    # Render helper for a single AlternativesReport
+    # ------------------------------------------------------
 
-    if st.button("🔍 Find Alternatives", type="primary"):
-        if not query.strip():
-            st.warning("Please enter a medicine name.")
+    def render_alternatives_report(report):
+        if not report.recognized:
+            st.warning(
+                f"**{report.queried_medicine}** could not be confirmed as a "
+                "recognized medicine from available web evidence. "
+                "Check the spelling, or try the generic name."
+            )
+            return
+
+        if report.shortage_context:
+            st.markdown(f"**Shortage Context:** {report.shortage_context}")
+
+        if report.therapeutic_class:
+            st.markdown(f"**Therapeutic Class:** {report.therapeutic_class}")
+
+        st.markdown(f"**Confidence:** {report.confidence * 100:.0f}%")
+
+        if not report.alternatives:
+            st.info(
+                "No reliable web evidence was found supporting a specific "
+                "alternative for this medicine."
+            )
         else:
-            key = query.strip().lower()
-            matches = {k: v for k, v in ALTERNATIVES_DB.items() if key in k}
-
-            if matches:
-                for med, alts in matches.items():
-                    st.markdown(f"#### Alternatives for **{med.title()}**")
-                    cols = st.columns(len(alts))
-                    for col, alt in zip(cols, alts):
-                        col.markdown(
-                            f'<div class="pw-card" style="text-align:center">'
-                            f'<h4>Alternative</h4><p style="font-size:16px">{alt}</p>'
-                            f'</div>',
-                            unsafe_allow_html=True,
-                        )
-            else:
-                st.info(
-                    f"No pre-loaded alternatives for **{query}**. "
-                    "Connect a medical database or LLM API here for live lookups."
+            st.markdown(f"#### Alternatives for **{report.queried_medicine.title()}**")
+            cols = st.columns(min(len(report.alternatives), 4))
+            for col, alt in zip(cols, report.alternatives):
+                caution_html = (
+                    f'<p style="font-size:11px;color:#f85149;margin-top:6px;">⚠ {alt.caution}</p>'
+                    if alt.caution else ""
                 )
+                col.markdown(
+                    f'<div class="pw-card" style="text-align:center">'
+                    f'<h4>Alternative</h4>'
+                    f'<p style="font-size:16px">{alt.name}</p>'
+                    f'<p style="font-size:11px;color:#8b949e;font-weight:400;">{alt.drug_class or ""}</p>'
+                    f'{caution_html}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            with st.expander("Why these alternatives?"):
+                for alt in report.alternatives:
+                    st.markdown(f"**{alt.name}** — {alt.similarity_notes}")
+                    if alt.caution:
+                        st.caption(f"⚠ {alt.caution}")
+
+        if report.web_sources:
+            with st.expander(f"Web Sources ({len(report.web_sources)})"):
+                for src in report.web_sources:
+                    st.markdown(f"- [{src}]({src})")
+
+        st.caption(report.disclaimer)
+
+    # ------------------------------------------------------
+    # TAB 1 — Manual Search
+    # ------------------------------------------------------
+
+    with tab_manual:
+        query = st.text_input("Enter medicine name", placeholder="e.g. Amoxicillin")
+
+        if st.button("🔍 Find Alternatives", type="primary"):
+            if not query.strip():
+                st.warning("Please enter a medicine name.")
+            else:
+                with st.spinner(f"Searching the web and analyzing alternatives for {query}…"):
+                    agent = AlternativesAgent()
+                    report = agent.lookup(query)
+                st.divider()
+                render_alternatives_report(report)
+
+    # ------------------------------------------------------
+    # TAB 2 — Auto-Suggest from Risk Reports
+    # ------------------------------------------------------
+
+    with tab_auto:
+        if not st.session_state.pipeline_run or not st.session_state.risk_reports:
+            st.info(
+                "Run the pipeline from the Dashboard first — this tab suggests "
+                "alternatives for medicines your Risk Agent has already flagged "
+                "as at-risk."
+            )
+        else:
+            all_meds = sorted({
+                med
+                for r in st.session_state.risk_reports
+                for med in safe_list(getattr(r, "affected_medicines", []))
+            })
+
+            if not all_meds:
+                st.info("The latest pipeline run did not flag any specific medicines.")
+            else:
+                st.markdown(f"**{len(all_meds)} at-risk medicine(s)** found in the latest pipeline run.")
+
+                if st.button("⚡ Suggest Alternatives for All", type="primary"):
+                    with st.spinner("Researching alternatives for at-risk medicines…"):
+                        agent = AlternativesAgent()
+                        st.session_state.alternatives_reports = agent.suggest_for_risk_reports(
+                            st.session_state.risk_reports,
+                            max_medicines=10,
+                        )
+
+                if st.session_state.alternatives_reports:
+                    st.divider()
+                    for i, report in enumerate(st.session_state.alternatives_reports):
+                        with st.expander(
+                            f"{i+1}. {report.queried_medicine}",
+                            expanded=(i == 0),
+                        ):
+                            render_alternatives_report(report)
 
     st.divider()
     st.caption(
